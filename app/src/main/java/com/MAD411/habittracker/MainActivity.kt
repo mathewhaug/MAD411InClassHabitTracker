@@ -12,7 +12,13 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 
-data class Habit(val title: String)
+
+//Add a stable unique id so LazyColumn keys are never duplicated
+//This prevents crashes when two habits have the same title
+data class Habit(
+    val id: Long = System.currentTimeMillis(),
+    val title: String
+)
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -27,11 +33,22 @@ class MainActivity : ComponentActivity() {
 
 @Composable
 fun HabitTrackerApp() {
-    // Observable list that LazyColumn can react to
+    //observable list that LazyColumn can react to
     val habits = remember { mutableStateListOf<Habit>() }
 
-    // Input state (use rememberSaveable so rotation keeps the typed text)
+    // Input state stays in the parent (this is the "source of truth")
+    //keep input state here so HabitInput can remain stateless.
     var habitTitle by rememberSaveable { mutableStateOf("") }
+
+    var hasTriedSubmit by rememberSaveable { mutableStateOf(false) }
+
+    var validationMessage by remember { mutableStateOf<String?>(null) }
+
+    val trimmedTitle = habitTitle.trim()
+
+    val isDuplicate = habits.any { it.title.equals(trimmedTitle, ignoreCase = true) }
+
+    val showError = hasTriedSubmit && (trimmedTitle.isEmpty() || isDuplicate)
 
     Scaffold(
         topBar = { HabitHeader() }
@@ -44,12 +61,29 @@ fun HabitTrackerApp() {
         ) {
             HabitInput(
                 title = habitTitle,
-                onTitleChange = { habitTitle = it },
+                onTitleChange = {
+                    habitTitle = it
+                    validationMessage = null
+                },
+                isError = showError,
+                errorMessage = validationMessage ?: "",
+                isAddEnabled = true,
                 onAddHabit = {
-                    val trimmed = habitTitle.trim()
-                    if (trimmed.isNotEmpty()) {
-                        habits.add(Habit(trimmed))
-                        habitTitle = ""
+                    hasTriedSubmit = true
+
+                    when {
+                        trimmedTitle.isEmpty() -> {
+                            validationMessage = "Habit title cannot be empty"
+                        }
+                        isDuplicate -> {
+                            validationMessage = "That habit already exists"
+                        }
+                        else -> {
+                            habits.add(Habit(title = trimmedTitle))
+                            habitTitle = ""
+                            validationMessage = null
+                            hasTriedSubmit = false
+                        }
                     }
                 }
             )
@@ -77,23 +111,40 @@ fun HabitHeader() {
 fun HabitInput(
     title: String,
     onTitleChange: (String) -> Unit,
+    isError: Boolean,
+    errorMessage: String,
+    isAddEnabled: Boolean,
     onAddHabit: () -> Unit
 ) {
-    Row(modifier = Modifier.fillMaxWidth()) {
-        OutlinedTextField(
-            value = title,
-            onValueChange = onTitleChange,
-            label = { Text("New habit") },
-            modifier = Modifier.weight(1f)
-        )
+    Column(modifier = Modifier.fillMaxWidth()) {
 
-        Spacer(modifier = Modifier.width(8.dp))
+        Row(modifier = Modifier.fillMaxWidth()) {
+            OutlinedTextField(
+                value = title,
+                onValueChange = onTitleChange,
+                label = { Text("New habit") },
+                isError = isError,
+                modifier = Modifier.weight(1f)
+            )
 
-        Button(
-            onClick = onAddHabit,
-            modifier = Modifier.heightIn(min = 56.dp)
-        ) {
-            Text("Add")
+            Spacer(modifier = Modifier.width(8.dp))
+
+            Button(
+                onClick = onAddHabit,
+                enabled = isAddEnabled,
+                modifier = Modifier.heightIn(min = 56.dp)
+            ) {
+                Text("Add")
+            }
+        }
+
+        if (isError && errorMessage.isNotBlank()) {
+            Spacer(modifier = Modifier.height(6.dp))
+            Text(
+                text = errorMessage,
+                color = MaterialTheme.colorScheme.error,
+                style = MaterialTheme.typography.bodySmall
+            )
         }
     }
 }
@@ -111,7 +162,7 @@ fun HabitList(habits: List<Habit>) {
     ) {
         items(
             items = habits,
-            key = { habit -> habit.title } // good habit (pun intended) for list stability
+            key = { habit -> habit.id }
         ) { habit ->
             HabitRow(habit = habit)
         }
